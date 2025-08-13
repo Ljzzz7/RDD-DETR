@@ -274,3 +274,6 @@ class gConvC3(RepC3):
         self.m = nn.Sequential(*[gConvBlock(c_) for _ in range(n)])
 
 ######################################## GConvC3 end ########################################
+
+def Upsample(x, size, align_corners = False):
+    return nn.functional.interpolate(x, size=size, mode='bilinear', align_corners=align_corners)
