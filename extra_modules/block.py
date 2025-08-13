@@ -5,7 +5,63 @@ import torch.utils.checkpoint as checkpoint
 import math
 import numpy as np
 
-__all__ = [  'gConvC3']
+__all__ = [ 'BasicBlock_Faster_Block_Rep', 'gConvC3','CSPOmniKernel']
+
+######################################## RFBlock start ########################################
+
+class Partial_conv3(nn.Module):
+    def __init__(self, dim, n_div=4, forward='split_cat'):
+        super().__init__()
+        self.dim_conv3 = dim // n_div
+        self.dim_untouched = dim - self.dim_conv3
+        self.partial_conv3 = nn.Conv2d(self.dim_conv3, self.dim_conv3, 3, 1, 1, bias=False)
+
+        if forward == 'slicing':
+            self.forward = self.forward_slicing
+        elif forward == 'split_cat':
+            self.forward = self.forward_split_cat
+        else:
+            raise NotImplementedError
+
+    def forward_slicing(self, x):
+        # only for inference
+        x = x.clone()   # !!! Keep the original input intact for the residual connection later
+        x[:, :self.dim_conv3, :, :] = self.partial_conv3(x[:, :self.dim_conv3, :, :])
+        return x
+
+    def forward_split_cat(self, x):
+        # for training/inference
+        x1, x2 = torch.split(x, [self.dim_conv3, self.dim_untouched], dim=1)
+        x1 = self.partial_conv3(x1)
+        x = torch.cat((x1, x2), 1)
+        return x
+		
+class Partial_conv3_Rep(Partial_conv3):
+    def __init__(self, dim, n_div=4, forward='split_cat'):
+        super().__init__(dim, n_div, forward)
+        
+        self.partial_conv3 = RepConv(self.dim_conv3, self.dim_conv3, k=3, act=False, bn=False)
+
+
+class Faster_Block_Rep(Faster_Block):
+    def __init__(self, inc, dim, n_div=4, mlp_ratio=2, drop_path=0.1, layer_scale_init_value=0, pconv_fw_type='split_cat'):
+        super().__init__(inc, dim, n_div, mlp_ratio, drop_path, layer_scale_init_value, pconv_fw_type)
+        
+        self.spatial_mixing = Partial_conv3_Rep(
+            dim,
+            n_div,
+            pconv_fw_type
+        )
+        
+
+class BasicBlock_Faster_Block_Rep(BasicBlock):
+    def __init__(self, ch_in, ch_out, stride, shortcut, act='relu', variant='d'):
+        super().__init__(ch_in, ch_out, stride, shortcut, act, variant)
+        
+        self.branch2b = Faster_Block_Rep(ch_out, ch_out)
+		
+######################################## RFBlock end ########################################
+
 
 ######################################## SPD-Conv start ########################################
 
